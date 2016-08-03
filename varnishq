@@ -1,0 +1,2 @@
+#!/bin/bash
+sbcl --noinform --core varnishq.core --eval '(in-package :varnishq)' --eval '(use-package :sb-ext)' --eval '(funcall (intern "INSTALL-REPL" :linedit) :wrap-current t)'
