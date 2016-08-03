@@ -1,0 +1,87 @@
+#+TITLE: VarnishQ - Referenz
+* DSL-Makros
+** any (expr)
+Wird innerhalb von Where verwendet, um auszudrücken, dass bei
+mehrfach-tags irgeneine Zeile eine bestimmte Eigenschaft haben muss
+** app (expr source)
+Erstellt eine Pipe, die einen Bestimmten Ausdruck auf jeden Request
+einer anderen Pipe anwendet
+** cnt (n expr source)
+Zählt die n nächsten Elemente einer Pipe anhand des Merkmals /expr/
+** objheader (name)
+Liefert des Headerwert eines bestimmten Namens aus dem ObjHeader
+** rxheader (name)
+Liefert des Headerwert eines bestimmten Namens aus dem RxHeader
+** select (expr source)
+Liefert eine Pipe, die Zeilen nach einem Bestimmten Kriterium auswählt
+** txheader (name)
+Liefert des Headerwert eines bestimmten Namens aus dem TxHeader
+** type-is (a)
+Stellt fest, ob der aktuelle Request vom typ /a/ ist. a kann 'c oder 'b sein.
+** where (expr source)
+Liefert eine Pipe, die die aus der Pipe Source stammenden Objekte nach
+einem bestimmten Kriterium abfiltert.
+* DSL-Funktionen 
+** ban-list ()
+Liefert die aktuelle Ban-List des Caches
+** bulk (source)
+Generiert Bulk-Ausgabe einer Pipe
+** contains (string pattern)
+Stellt fest, ob pattern in string enthalten ist
+** dmp (source)
+Liefert Taballarische Ausgabe aus einer Pipe
+** dump (source)
+Liefert Dump einer Pipe
+** file (name) Erzeugt Pipe aus Logdatei
+Liefert eine Pipe, die eine Datei einliest
+** head (n l)
+Liefert die ersten n Elemente einer liste
+** is-prefix (prefix string)
+Stellt fest, ob prefix ein Präfix zu string ist
+** live () 
+Erzeugt Pipe aus /varnishlog/.
+** matches (pattern string)
+Stellt fest, ob regex-pattern in einem string enthalten ist
+** max-age (r &optional (default nil))
+Liefert das Max-Age eines Requests
+** nth-num (n string &optional (default 0))
+Liefert die n-te Zahl innerhalb eines Strings
+** numb (pattern string)
+Liefert die Zahl innerhalb eines Strings
+** select-tag (tag source)
+Liefert eine Pipe, die ein bestimmtes Tag eines Requests passieren lässt
+** select-tags (tags source)
+Liefert eine Pipe, die nur bestimmte Tags eines Requests passieren lässt
+** substr (s from &optional to)
+Sichere Version von subseq
+** tab (table)
+Gibt eine Liste tabellarisch aus
+** tabcar (l)
+Gibt eine Liste tabellarisch aus
+** take (n source)
+Entnimmt einer Pipe eine bestimmte Anzahl Requests
+* interne Macros 
+** aif (test then &optional else)
+"anaphorisches if"
+[[http://letoverlambda.com/index.cl/guest/chap6.html][Anaphoric Macros]]
+#+BEGIN_SRC  lisp
+(aif (cdr x) (print it))
+#+END_SRC
+** collect (symbols body)
+* interne Funktionen
+** code (x) 
+** col-widths-of-table (table)
+** data (x) "datenfeld eines Satzes" (nth 3 x))
+** dissect (pattern string)
+** find-tag-data (tag req)
+** flatten-opnds (l)
+** inc-hash (hk htab)
+** iterator (s); Zeilen-Iterator eines Streams erstellen.
+** live-stream ()
+** logfile-stream (name)
+** parse (line)
+** print-log-line (l)
+** tag (x)  "Tag eines Satzes" (nth 1 x))
+** thread (x) "thread-# eines Satzes" (nth 0 x))
+** time-string (time)
+** varnish-request-aggregator (source)

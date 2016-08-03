@@ -1,0 +1,127 @@
+#+OPTIONS: texht:t toc:nil
+#+LATEX_CLASS: article
+#+LATEX_CLASS_OPTIONS: [article,a4paper,times,12pt,listings-bw,microtype,german]
+#+LATEX_HEADER: \usepackage[ngerman]{babel}
+#+LATEX_HEADER: \usepackage{fancyhdr}
+#+LATEX_HEADER: \renewcommand{\headheight}{0.6in}
+#+LATEX_HEADER: \setlength{\headwidth}{\textwidth}
+#+LATEX_HEADER: \fancyhead[L]{}% empty left
+#+LATEX_HEADER: \fancyhead[R]{ % right
+#+LATEX_HEADER:    \includegraphics[height=0.53in]{h:/home/Vorlagen/deutsche-welle-logo.jpg}
+#+LATEX_HEADER: }
+#+LATEX_HEADER: \pagestyle{fancy}
+#+LATEX_HEADER_EXTRA:
+#+LANGUAGE: de
+#+AUTHOR: Patrick Krusenotto
+#+TITLE: \includegraphics[width=11em]{h:/home/Vorlagen/deutsche-welle-logo.jpg} \\ \vspace{1cm}
+#+TITLE: VarnishQ - Abfragesprache für Varnish-Caches
+#+BEGIN_ABSTRACT
+VarnishQ ist eine Domain-Specific Language (DSL) zur Live-Abfrage von
+laufenden Varnish-Caches oder zur Analyse von mit varnishlog erzeugten
+Logfiles.
+#+END_ABSTRACT
+\pagebreak
+
+* Technische Grundlage 
+** SBCL
+VarnishQ basiert auf der Common-Lisp-Implementierung SBCL. Adaptionen
+auf andere Common-Lisp-System sind denkbar erscheinen aber nicht geboten.
+
+Es wird die SBCL-Implementierung aus der aktuellen Distribution verwendet.
+
+** Polnische Notation
+Lisp arbeitet mit /polnischer Notation/ nach dem polnischen Grundlagenforscher Jan Łukasiewicz, † 13. Februar 1956
+*** Beispiel
+    Produkt aus 1+4 und 3
+wir darggestellt als 
+#+BEGIN_SRC lisp
+    (* (+ 1 4) 3)
+#+END_SRC
+* Starten
+Mit =./varnishq= wird VarnishQ von der Linux Shell gestartet. Dazu
+muss /SBCL/ installiert sein und die Datei "varnishq.core" sich im
+aktuellen Verzeichnis befinden
+* Stoppen
+Mit =(exit)= wird der Listener  beendet.
+* Einfache Queries in Beispielen
+** Fünf Requests aus dem Live Stream
+#+BEGIN_SRC lisp
+   (take 5 ((live))
+#+END_SRC
+** Nur ausgewählte Tags 
+#+BEGIN_SRC lisp :exports both
+  (take 20 (select-tag 'RxUrl (live)))
+#+END_SRC
+
+: RESULT
+: (NIL NIL NIL NIL NIL ((63 RXURL C "/")) NIL
+:  ((75 RXURL C "/yayinlarimiz/ileti%C3%85%C5%B8im/s-10199")) NIL NIL
+:  ((55 RXURL C "/favicon.ico")) NIL NIL
+:  ((68 RXURL C "/js/jwplayer/skins/dw/dw.xml")) NIL
+:  ((84 RXURL C "/favicon.ico")) NIL ((102 RXURL C "/p/1DcxK")) NIL NIL)
+
+#+BEGIN_SRC lisp
+  (take 20 (select-tag 'RxUrl (where (type-is 'C) (live))))
+#+END_SRC
+File komplett ausgeben
+#+BEGIN_SRC lisp
+   (dump (file "~/src/lisp/varnishgrep/varnishlog.log"))
+#+END_SRC
+Live-Stream mitlesen
+#+BEGIN_SRC lisp
+(dump (select (matches "Cache-Control" data) (live)))
+#+END_SRC
+* Request-Auswahl
+Nur Client Requests (Typ "C") ausgeben:
+#+BEGIN_SRC lisp
+  (dmp (where (type-is 'c) (live)))
+#+END_SRC
+Nur Zugriffe auf Startseiten ausgeben:
+#+BEGIN_SRC lisp
+  (dmp (where (matches *dw-de-startpages* RxUrl) (live)))
+#+END_SRC
+Nur Client-Zugriffe der Startseiten
+#+BEGIN_SRC lisp
+  (dmp (where (and (type-is 'c) (matches *dw-de-startpages* RxUrl)) (live)))
+#+END_SRC
+
+* Zeilenauswahl
+Auswahl aller Zeilen die "Cache-Cotrol" enthalten
+#+BEGIN_SRC lisp
+  (dump (select (matches "Cache-Control" data) (live))
+#+END_SRC
+
+
+#+BEGIN_SRC lisp
+  (dmp (not-null (select (matches "Cache-Control" data) (live))))
+#+END_SRC
+
+#+BEGIN_SRC lisp 
+  (dmp (select (or (eq tag 'TxUrl) (matches "Cache-Control" data)) (live))))
+#+END_SRC
+* Komplexere Beispiele
+Die URLS und die Cache-Control-Angaben der Aufrufe der Startseiten
+#+BEGIN_SRC lisp
+  (dmp (select (or (eq tag 'rxurl) 
+                   (matches "Cache-Control" data)) 
+               (where (matches *dw-de-startpages* rxurl) (live))))
+#+END_SRC
+
+** Alle Requests, bei denen =max-age= über 3600 liegt
+#+BEGIN_SRC lisp
+  (dmp (where (any (aif (numb "max-age=(\\d+)" rxheader) (> it 3600))) (live)))
+#+END_SRC
+
+#+BEGIN_SRC lisp
+(dmp (select-tag 'rxurl (where (any (aif (numb "max-age=(\\d+)" rxheader) (> it 3600))) (live)))
+#+END_SRC
+Die =where=-clausel besteht aus einen =any= Aufruf. Innerhalb dessen
+muss ein Zugriff auf ein Mehrfach-Tag erfolgen. Hier ist das
+RXHEADER. Der Aufruf =numb= isoliert das pattern /(\\d+)/ (Eine Folge
+von Ziffern) aus diesem Header. =aif= bindet das Ergebnis an die
+Variable =IT=, auf die sich die folgende =>=-Abfrage bezieht. Findet
+=ANY= einen Header, der =max-age== mit nachfolgender Integer Zahl
+enthält und dem Vergleich standhält, so ist die Bedingung der =where=
+Clausel erfüllt und der Request wird ausgegeben.
+
+- Mehrfach-Tag : hxheader,txheader

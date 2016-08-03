@@ -1,0 +1,511 @@
+# Confluence-Ort https://confluence.dw.de/display/ITDOCS/VarnishQ
+
+# ===> kaputten Confluence-Export reparieren
+# M-x replace-regexp `\(.*?\)' <enter>  {{\1}} <enter> 
+
+#+OPTIONS: texht:t toc:nil
+#+LATEX_CLASS: article
+#+LATEX_CLASS_OPTIONS: [article,a4paper,times,11pt,listings-bw,microtype,german]
+#+LATEX_HEADER: \usepackage[ngerman]{babel}
+#+LATEX_HEADER: \usepackage{fancyhdr}
+#+LATEX_HEADER: \renewcommand{\headheight}{0.6in}
+#+LATEX_HEADER: \setlength{\headwidth}{\textwidth}
+#+LATEX_HEADER: \fancyhead[L]{}% empty left
+#+LATEX_HEADER: \fancyhead[R]{ % right
+#+LATEX_HEADER:    \includegraphics[height=0.53in]{h:/coll/Vorlagen/deutsche-welle-logo.jpg}
+#+LATEX_HEADER: }
+#+LATEX_HEADER: \pagestyle{fancy}
+#+LATEX-HEADER: 
+#+Latex_HEADER_EXTRA:
+#+LANGUAGE: de
+#+AUTHOR: Patrick Krusenotto
+#+TITLE: \includegraphics[width=11em]{h:/coll/Vorlagen/deutsche-welle-logo.jpg} \\ \vspace{1cm}
+#+TITLE: VarnishQ - Sprachbeschreibung
+#+BEGIN_ABSTRACT
+Das Dokument beschreibt die Abfragesprache VarnishQ für Varnish-Caches, die bei IT-Betrieb entstanden ist.
+
+An den Varnish-Caches sind weitgehende Untersuchungen zum Zustand
+unserer Internet-Software möglich. Dazu müssen die Caches wegen der
+anfallenden Datenmasse (etwa 8000 Zeilen Loginformation pro Cache pro
+Sekunde) allerdings qualifiziert befragt werden können. Durch diese
+Abfragesprache wird dies möglich.
+#+END_ABSTRACT
+\pagebreak
+
+* Grundlagen
+** Notatation 
+*** Polnische Notation
+VarnishQ arbeitet mit /polnischer Notation/. Eine Funktionsaufruf wird nicht =f(x,y,z)= sondern =(f x y z)= notiert. Hinter der öffnenden Klammer steht immer der Name einer Funktion oder eines Operators. Dazu gibt es keine Ausnahmen.
+*** Groß/Kleinschreibung 
+VarnishQ unterscheidet bei Namen und Symbolen nicht zwischen Groß-- und Kleinschreibung. Bei Strings allerdings schon. In diesem Text sind zulässige Symbole im Fließtext =GROSS= und in Code-Besipielen =klein= geschrieben.
+** Requests
+Requests sind eine /Folge von Datensätzen/, die einer Live-Beobachtung im Rahmen eins Tests oder einem Logfile entstammen. Die Datensätze selbst haben die Form:
+| *Name* | *Typ*    |
+|--------+----------+
+| TAG    | /Symbol/ |
+| CODE   | /Symbol/ |
+| DATA   | /String/ |
+
+   - *TAG* ist eines der Varnish-Tags wie =RXURL=, =RXHEADER=, =TXSTATUS= usw. /Eindeutige/ TAGs kommen pro Request nur einmal vor (wie =RXURL=), /mehrfache/ beliebig oft (wie =RXHEADER=)
+   - *CODE* hat den Wert =B= für /Backend-Request/ (Varnish an Backend) oder =C= für /Client-Request/ (Client an Varnish).
+   - *DATA* Der Datenbereich. Er enthält einen String. Bei Headern
+     (mit Tag RXHEADER oder TXHEADER) zum Beispiel etwas wie "=Cache-Control: max-age=60="
+Beispiel
+#+BEGIN_EXAMPLE
+TXURL B /cda/fragment/teaser/342987329
+#+END_EXAMPLE
+Hier lautet der /TAG/ =TXURL=, der /CODE/ =B= und =/cda/fragment/teaser/..= das /DATA/ -Element.  
+
+Ein Request besteht bei /www.dw.de/ aus bis zu 600 solcher Datensätze (bei Strukturseiten etwa), mithin aus 600 Logfile-Zeilen.
+| *Tag*      | *Code* | *Data*                                                                           |
+|------------+--------+----------------------------------------------------------------------------------|
+| RXREQUEST  | C      | GET                                                                              |
+| RXURL      | C      | \/deutsch\/2013\/twitter-com-33\/                                                |
+| RXPROTOCOL | C      | HTTP/1.1                                                                         |
+| RXHEADER   | C      | Host: thebobs.com                                                                |
+| RXHEADER   | C      | User-Agent: Mozilla/5.0 (+http://yandex.com/bots) From: support@search.yandex.ru |
+| RXHEADER   | C      | Accept-Encoding: gzip,deflate                                                    |
+| RXHEADER   | C      | Accept-Language: tr, en;q=0.7, \*;q=0.01                                         |
+| RXHEADER   | C      | Accept: \*/\*                                                                    |
+| RXHEADER   | C      | X-Forwarded-For: 178.154.255.138                                                 |
+| RXHEADER   | C      | Connection: close                                                                |
+| VCL_CALL   | C      | recv lookup                                                                      |
+| VCL_CALL   | C      | hash                                                                             |
+| HASH       | C      |                                                                                  |
+| HASH       | C      | \/deutsch\/2013\/twitter-com-33\/                                                |
+   
+* Anwendung
+** Request-Streams
+Request--Streams liefern eine /Folge von Requests/. Es gibt drei /primäre/ Request--Streams:
+   1. =(live)= liefert die auf dem Server aktuell verarbeiteten Requests
+   2. =(file "dateiname")= liefert die Requests aus einem File, das
+      mit =varnishlog > dateiname= auf der Konsole erstellt
+      wurde. Dieses Format wird für die täglichen Mitschnitte unter
+      =/web/logfiles/varnish/= verwendet. Pfade müssen voll angegeben werden.
+   3. =(vlog "dateiname")= dekodiert die Requests aus binären
+      Mitschnitten mit =varnishlog -w= /<filename>/. Pfade müssen voll
+      angegeben werden.
+
+** Starten und Stoppen
+VarnishQ ist auf unseren Caches WEBCACHE01-LIVE, WEBCACHE02-LIVE, WEBCACHE11-LIVE, WEBCACHE12-LIVE, und WEBCACHE01-TEST installiert. 
+
+Es befindet sich dort unter =/web/apps/varnishq= und kann in diesem Verzeichnis aus der Bash mit =./varnishq= gestartet werden. Beenden erfolgt mit =(exit)=.
+** Requestauswahl mit =WHERE=
+Requests beschreiben den Ablauf einer erfolgten Requestverarbeitung. Mit =(where= /<where-bedingung>/ /<request-stream>/ =)= kann aus einem Request-Stream ein neuer Request-Stream gebaut werden, der nur die Requests enthält die einer Bedingung genügen.  
+
+Jedes eindeutige Tag kann in der Bedingung direkt verwendet werden. Der Ausdruck
+#+begin_example
+(where (matches "/a-" rxurl) (live))
+#+end_example
+liefert einen neuen Request-Stream, der diejenigen Requests enthält, bei denen der mit RXURL getaggte Datensatz im DATA-Bereich den String =/a-= enthält (Zugriffe auf DW-Artikel). 
+
+Bedingungen können mit =(and..)=, =(or..)= und =(not ..)= verbunden werden. Für mehrfache TAGs gibt es den Quantor =(any..)=. Um allein das /Vorkommen/ eines bestimmten Tags zu prüfen, kann es einfach genannt werden:
+#+BEGIN_EXAMPLE
+(where (and hit (any (matches "akamai" rxheader))) (live))
+#+END_EXAMPLE
+Dieser Stream fragt nach Requests, die das Tag HIT enthalten und bei denen irgendeine der Headerzeilen den String =akamai= enthält. Für die (mehrfachen) Header-Tags =RXHEADER=, =TXHEADER= und =OBJHEADER= gibt es eigene Funktionen =(rxheader= /<string>/ =)=, =(txheader= /<string>/ =)= und =(objheader= /<string>/ =)=:
+#+BEGIN_EXAMPLE
+(where (contains (rxheader "Host") "thebobs") (live))
+#+END_EXAMPLE
+Dier Stream liefert alle Requests, die an die Bobs gegeangen sind.
+
+ Reguläre Ausdrücke (Perl-kompatibel) werden mit =(matches= /<regex>/ /<datum>/ =)= angewendet. Der =\= muss gedoppelt werden, also =\\d+= statt =\d+= für eine Folge von Ziffern.
+
+** Requests ausführen
+Ein Request--Stream kann mit =(dmp ..)=, =(dump ..)= oder =(take= $n$ /<quelle>/ =)= befragt werden werden. Ist in dem Stream eine Query kodiert, so wird sie ,,ausgeführt'':
+#+BEGIN_EXAMPLE
+(dmp (where (contains rxurl "/s-") (live)))
+#+END_EXAMPLE
+Diese Eingabe füllt den Bildschirm mit den Requests an dw.de-Strukturseiten
+** Zeilenauswahl mit =SELECT=, =SELECT-TAG= und =SELECT-TAGS=
+Man möchte nicht immer alles von einem Request zu sehen bekommmen sondern ist nur an dem URL, der Frage ob HIT oder MISS, dem verwendeten Backend, dem Hostnamen, dem HTTP-Return-Code, dem Referrer oder an Headern mit bestimmten Werten interessiert. Dazu dienen die select-Anweiusngen.
+
+=SELECT-TAG= liefert nur Datensätze mit einem bestimmten Tag. Die Query
+#+BEGIN_EXAMPLE
+(dmp (select-tag 'rxurl (live)))
+#+END_EXAMPLE
+gibt nur den RXURL aus. Das Häkchen ist obligatorisch. /Insbesondere ist es auch kein Tippfehler: Es steht nur vor dem Symbol ein Häkchen./ Bei Backend-Requests erfolgen in diesem Besipiel nur Leerzeilen, da diese kein =RXURL= haben. Der Output wird also schöner, wenn man von vorne herein nur Client-Requests zulässst:
+#+BEGIN_EXAMPLE
+(dmp (select-tag 'rxurl (where (type-is 'c) (live))))
+#+END_EXAMPLE
+=select-tags= (plural) liefert mehrere Datensätze:
+#+BEGIN_EXAMPLE
+(dmp (select-tags '(rxurl reqend) (live)))
+#+END_EXAMPLE
+=select= wählt aufgrund einer Bedingung aus. Diese darf die sich auf die Datenelemente TAG CODE und DATA beziehen.
+#+BEGIN_EXAMPLE
+(dmp (select (contains data "english") (live))) 
+#+END_EXAMPLE
+Auch hier darf mit =AND=, =OR= und =NOT= gearbeitet werden. 
+
+Alle Datensätze, die ,,english'' enthalten oder deren Tag =RXURL= lautet:
+#+BEGIN_EXAMPLE
+(dmp (select (or (eq tag 'rxurl) (contains data "english")) (live)))
+#+END_EXAMPLE
+
+Dabei dient =(eq ...)= dem Tag-vergleich (,,equal'').
+=select=, =select-tag= und =select-tags= liefern ihrerseits /Request--Streams/. Also können sie gemeinsam mit =WHERE= in beliebiger Folge verschachtelt werden:
+#+BEGIN_EXAMPLE
+(dmp (select-tag ... (where ..(select .. (where.. )))))
+#+END_EXAMPLE
+** Datenisolierung mit =NTH-NUM= und =NUMB=
+=(nth-numb= /<n> <string>/ =)= isoliert die $n$-te Zahl aus einem String. Die Verabeitungsdauer eines Requests kann dem TAG =REQEND= entnommen werden:
+#+BEGIN_EXAMPLE
+(dmp (where (> (nth-num 4 reqend) 2) (live)))
+#+END_EXAMPLE
+liefert die Requests, die länger als 2 Sekunden Render-Zeit hatten.(Die vierte Zahl von =reqend= ist die Laufzeit).  
+
+=(numb= /<regex> <string>/ =)= liefert eine Zahl aufgrund eines Patterns. Zum Beispiel ist 
+#+BEGIN_EXAMPLE
+(numb "max-age=(\\d+)" (txheader "Cache-Control")) 
+#+END_EXAMPLE
+die /max-age-Angabe/ des Servers für den betreffenden Request.
+
+
+** Auswertungen mit =CHART= und =AVG=
+Zur Erstellung eines Charts gibt es =(chart= /<anzahl-sätze> <länge> <ausdruck> <quelle>/ =)=.
+#+BEGIN_EXAMPLE
+(chart 1000 10 (rxheader "Host") (live))
+#+end_EXAMPLE
+erstellt ein Chart der zehn häufigsten Vorkommen der Hostnamen aus den 1000 nächsten Zugriffen auf das Live-System. Durchschnitte werden mit =(avg..)= berechnet. Die durchschnittliche Verarbeitungszeit von 100 Requests, die kein Hit sind, findet sich mit
+#+BEGIN_EXAMPLE
+(avg (nth-numb 4 reqend) (where (not hit) (live)))
+#+end_EXAMPLE
+** Bindung selbst definierter Datenquellen
+*** Eine nicht-Kontinuierliche Projektbezogene Datenquelle als Alternative zu =LIVE= definieren
+Wenn es im Rahmen einer Sitzung erforderlich ist, immer wieder die
+selben einschränkungen bezüglich einer Datenquelle zu machen, so kann
+mit reinen LISP-Mitteln eine Funktion gebaut werden, die eine solche
+Datenquelle bereitstellt.  Folgende Requests werden dann
+verinfacht. Sollen beispielsweise alle TheBobs-Requests geliefert
+werden, so kann das folgendermassen erfolgen:
+#+BEGIN_EXAMPLE
+VARNISHQ> (defun bobs-live () (where (matches "bobs" (rxheader "Host")) (live)))                         
+BOBS-LIVE                                                                                                
+#+END_EXAMPLE
+
+Nun steht =BOBS-LIVE= als Funktion zu Verfügung:
+
+#+BEGIN_EXAMPLE
+VARNISHQ> (take 1 (bobs-live))                                                                           
+(((97 SESSIONCLOSE C "Connection: close")                                                                
+  (97 STATSESS C "172.16.247.199 50389 0 1 1 0 0 0 283 2024")                                            
+  (97 SESSIONOPEN C "172.16.247.200 41207 :80")                                                          
+  (97 REQSTART C "172.16.247.200 41207 1662291125") (97 RXREQUEST C "GET")                               
+  (97 RXURL C "/ukrainian/wp-content/themes/bobs/img/language_arrow.png")                                
+  (97 RXPROTOCOL C "HTTP/1.1") (97 RXHEADER C "X-Forwarded-For: 91.202.130.48")                          
+  (97 RXHEADER C "X-Forwarded-Proto: https")                                                             
+  ....
+#+END_EXAMPLE
+Selbstverständlich kann diese neu definierte Datenquelle widerum
+Bestandteil einer Query sein also wie =(LIVE)= verwendet werden.
+** Hilfe
+Viele Operatoren sind dokumentiert. Dokumentation zu =where= lässt sich zum Beispiel abrufen mit
+#+BEGIN_EXAMPLE
+(describe 'where)
+#+END_EXAMPLE 
+Eine kürzere Ausgabe liefert 
+#+BEGIN_EXAMPLE
+(documentation 'where 'function)
+#+END_EXAMPLE
+** Scripting und Client-Server-Betrieb
+Unter =/web/apps/varnishq= befindet sich =vq-script=. Damit kann mit von der Shell aus eine Query aus einem Textfile abgesetzt werden (=./vq-script= <filename>).
+
+*** Remote Sitzung
+Im gleichen Verzeichnis ist =vq-server=, das es gestattet, eine remote
+Sitzung von einem lokalen Emacs aus zu starten und damit mehrere
+Caches gleichzeitig zu überwachen. Dazu ist ein lokaler Emacs auf dem Client-PC und ein ssh-Tunnel von Nöten: 
+
+Die Einrichtung erfolgt so:
+**** Putty SSH Tunnel errichten
+      * Server (WebcacheXX-TEST/LIVE) eintragen
+      * Unter Menüpunkt /SSH Tunnel/
+        * Source-Port:    4005
+        * Destination:    localhost:4005
+        * "ADD" Drücken
+        * "Connect" ausführen
+      * über die Console einloggen
+**** Im nun offenen Putty-Terminal Server starten:
+#+BEGIN_EXAMPLE
+./vq-server
+
+;; Swank started at port: 4005.
+#+END_EXAMPLE
+
+**** Im Client Slime-Sitzung öffnen und über den Tunnel mit dem Server verbinden
+M-x slime-connect, Server: 127.0.0.1, Port: 4005
+
+Jetzt kann vom PC aus der Webcache überwacht werden, ohne die
+Prozessoren des Webcaches zu belasten.
+* Praxisbeispiele
+Folgende Queries sind so oder ähnlich in der Praxis schon relevant gewesen
+** Charts
+*** Returncodes der Backends
+#+BEGIN_EXAMPLE
+VARNISHQ> (chart 1000 10 rxstatus (where (type-is 'b) (live)))
+554 55.4       200
+352 35.2       502
+39  3.9        301
+25  2.5        500
+14  1.4000001  404
+7   0.70000005 302
+5   0.5        403
+4   0.4        400
+#+END_EXAMPLE
+*** Anteil der wiederverwendeten TCP-Verbindungen
+#+BEGIN_EXAMPLE
+VARNISHQ> (chart 1000 10 (txheader "connection") (where (type-is 'c) (live)))
+576 57.6      close
+418 41.800003 keep-alive
+6   0.6       NIL
+#+END_EXAMPLE
+*** Strukturseiten, die allein aus dem Cache bedient werden konnten:
+#+BEGIN_EXAMPLE
+VARNISHQ> (chart 100 2 (null backend) (where (matches "/s-" rxurl) (live)))
+69 69.0 NIL
+31 31.0 T
+#+END_EXAMPLE
+*** Welche Teaser liefern die häufigsten Fehler
+#+BEGIN_EXAMPLE
+(chart 1000 30  (nth-num 0 txurl) 
+       (where (and (type-is 'b) 
+                   (not (member rxstatus '(200 301 302 400 403 404 500))))
+              (live)))
+
+52 23308996
+52 23281961
+27 23260699
+27 23260698
+27 23260696
+24 23331501
+22 23290265
+17 23149812
+17 23331740
+16 23178486
+15 23326280
+15 23324471
+14 23280573
+14 23280570
+14 23280568
+14 23280567
+14 22983799
+14 22983800
+14 23326775
+14 23331953
+13 23268300
+12 23304107
+12 23268299
+12 23148688
+12 23322383
+12 20893911
+12 20893916
+11 23319408
+10 23329334
+9  23324846
+#+END_EXAMPLE
+*** Welcher Anteil der Client-Requests is von "Bad Gateway"-Meldungen betoffen?
+#+BEGIN_EXAMPLE
+VARNISHQ> (chart 1000 2 (any (contains "Bad Gateway" objresponse)) (where (type-is 'c) (live)))
+'varnishlog' closure abandoned
+878 87.8 NIL
+122 12.2 0
+#+END_EXAMPLE
+Antwort: 12%
+* Performance 
+Varnishq schafft rund 150000 Requests/s. Für jedes Gigabyte Logfile sind etwa 3 Minuten Verabeitungszeit anzusetzen. Hängt aber von der Query ab. Bei verknüpften Bedingungungen sollten die einfachsten so weit wie möglich vorne stehen. Also lieber =(where (and hit (contains (rxheader "polish"))) (live))= als =(where (and (contains (rxheader "polish")) hit) (live))=.
+* Sprachreferenz
+** BNF
+*** Tags
+#+BEGIN_EXAMPLE
+<mehrfach-tag> ::= GZIP | OBJRESPONSE | OBJPROTOCOL | BACKEND
+                   | HIT | VCL_ACL  | OBJHEADER | TTL | TXHEADER
+                   | VCL_RETURN  | HASH | VCL_CALL  | RXHEADER
+
+<einfach-tag ::= WORKTHREAD | TXURL | TXSTATUS | TXRESPONSE | 
+                  | TXREQUEST | TXPROTOCOL | STATSESS
+                  | SESSIONOPEN | SESSIONCLOSE | RXURL
+                  | RXSTATUS | RXRESPONSE | RXREQUEST
+                  | RXPROTOCOL | REQSTART | REQEND | INTERRUPTED
+                  | FETCH_BODY  | FETCHERROR | EXPKILL | EXPBAN
+                  | DEBUG | CLI | BACKEND_HEALT  | BACKENDREUSE
+                  | BACKENDOPEN | BACKENDCLOSE
+
+<integer-tag> ::= RXSTATUS | TXSTATUS | LENGTH
+
+<tag> ::= <einfach-tag> | <mehrfach-tag>
+#+END_EXAMPLE
+*** Werte
+#+BEGIN_EXAMPLE
+<integer> ::= <integer-tag> 
+              | (nth-num <integer> <string>)   
+              | (numb <regex> <string>)        
+              | (epoch <integer>^6 [<integer>])              
+              | integer-literal                 
+
+
+
+<string> ::= "irgend ein text"
+             | <einfach-tag> 
+             | (RXHEADER <string>)
+             | (TXHEADER <string>)
+             | (OBJHEADER <string>)
+
+<regex>  ::= <string>
+#+END_EXAMPLE
+*** Bedingungen
+#+BEGIN_EXAMPLE
+<integer-vergleich> ::= =|<|>|>=|<=|/= 
+
+<string-vergleich>  ::= string= 
+                       |string<  
+                       |string> 
+                       |string<= 
+                       |string>= 
+                       |string/=
+
+<condition>           ::= <tag>
+                       |(<integer-vergleich> <integer>*)
+                       |(<string-vergleich> <string>*)
+                       |(MATCHES <regex> <string>)
+                       |(AND <condition>*)
+                       |(OR <condition>*)
+                       |(NOT <condition>*)
+                       |(ANY <condition>*)
+
+<liste> ::= <mehrfach-tag> 
+            | '(<atom>*) 
+
+
+#+END_EXAMPLE
+Die Mit =ANY= eingeleitete Bedingung muss /genau einen Mehrfachtag/ enthalten, der innerhalb Bedingung einfach mit seinem Namen angesprochen wird. Also =(ANY (AND HIT (matches ''Chattanooga Choo Choo'' rxheader))= /<source>/ =)=. 
+
+Falls andere Quantoren (EVERY, SOME, NOTANY, NOTEVERY) benötigt werden oder mehrere Mehrfachtags gleichzeitig in eine Bedingung eingehen sollen, kann mit /Lambdas/ gearbeitet werden:
+#+BEGIN_EXAMPLE
+(where (notevery (lambda (a b) (matches a b)) rxheader vcl_call) (live)) 
+#+END_EXAMPLE
+Das wäre aber ein weitergehendes Thema, für das hier kein Platz ist.
+*** Streams
+#+BEGIN_EXAMPLE
+<stream> ::= (LIVE)
+            |(FILE <string>)
+            |(VLOG <sttring>)
+            |(FILE-starting-at <string> <integer>
+            |(WHERE <condition> <stream>)
+            |(SELECT-TAG 'tag <stream>)
+            |(SELECT-TAGS <list> <stream>)
+            |(SELECT <tcd-condition> <stream>)
+#+END_EXAMPLE
+Eine <tcd-condition> darf die Datenelemente =TAG=, =CODE= und =DATA= verwenden und sich damit auf Datensätze allgemein beziehen
+*** Queries
+#+BEGIN_EXAMPLE
+<query> ::=  (APP <expr> <stream>)
+            |(DMP <stream>)
+            |(DUMP <stream>)
+            |(TAKE <integer> <stream>)
+            |(CHART <integer> <integer> <expr> <stream>)
+#+END_EXAMPLE
+** Variablen, Funktionen, Makros (noch unvollständig)
+*** Mehrfach-Tags
+#+BEGIN_EXAMPLE
+BACKEND VCL_ACL GZIP HASH OBJHEADER TTL OBJPROTOCOL OBJRESPONSE
+RXHEADER TXHEADER VCL_CALL VCL_RETURN
+#+END_EXAMPLE
+*** Einfach-Tags
+#+BEGIN_EXAMPLE
+BACKENDCLOSE BACKENDOPEN BACKENDREUSE BACKEND_HEALT CLI DEBUG EXPBAN
+EXPKILL FETCHERROR FETCH_BODY HIT INTERRUPTED REQEND REQSTART
+RXPROTOCOL RXREQUEST RXRESPONSE RXSTATUS RXURL SESSIONCLOSE
+SESSIONOPEN STATSESS TXPROTOCOL TXREQUEST TXRESPONSE TXSTATUS TXURL
+WORKTHREAD
+#+END_EXAMPLE
+
+*** Makros
+**** (any expr expr)
+Wird innerhalb von =WHERE= verwendet, um auszudrücken, dass bei
+mehrfach-tags irgeneine Zeile eine bestimmte Eigenschaft haben muss
+**** (app expr source)
+Erstellt einen Request--Stream, die einen Bestimmten Ausdruck auf jeden Request
+eines anderen Request--Streams anwendet
+**** (cnt n expr source)
+Zählt die n nächsten Elemente eines Request--Streams anhand des Merkmals /expr/
+**** (objheader name)
+Liefert des Headerwert eines bestimmten Namens aus dem ObjHeader
+**** (rxheader name)
+Liefert des Headerwert eines bestimmten Namens aus dem RxHeader
+**** (select expr source)
+Liefert einen Request-Stream, die Zeilen nach einem Bestimmten Kriterium auswählt
+**** (txheader name)
+Liefert des Headerwert eines bestimmten Namens aus dem TxHeader
+**** (type-is <symbol>)
+Stellt fest, ob der aktuelle Request vom typ /a/ ist. a kann 'c oder 'b sein.
+**** (where expr source)
+Liefert einen Request--Stream , die die aus dem Request--Stream Source stammenden Objekte nach
+einem bestimmten Kriterium abfiltert.
+*** Funktionen 
+**** (ban-list)
+Liefert die aktuelle Ban-List des Caches
+**** (bulk source)
+Generiert Bulk-Ausgabe eines Request--Streams
+**** (contains string pattern)
+Stellt fest, ob pattern in string enthalten ist
+**** (dmp source)
+Liefert tabellarische Ausgabe aus eines Request--Streams
+**** (dump source)
+Liefert Dump eines Request--Streams
+**** (file name) Erzeugt Request--Stream aus Logdatei
+Liefert einn Request--Streams, die eine Datei einliest
+**** (head n l)
+Liefert die ersten n Elemente einer liste
+**** (is-prefix prefix string)
+Stellt fest, ob prefix ein Präfix zu string ist
+**** (live)  
+Erzeugt Request--Stream aus /varnishlog/.
+**** (matches pattern string)
+Stellt fest, ob regex-pattern in einem string enthalten ist
+**** (max-age r &optional (default nil))
+Liefert das Max-Age eines Requests
+**** (nth-num n string &optional (default 0))
+Liefert die n-te Zahl innerhalb eines Strings
+**** (numb pattern string)
+Liefert die Zahl innerhalb eines Strings
+**** (select-tag tag source)
+Liefert einen Request--Stream, die ein bestimmtes Tag eines Requests passieren lässt
+**** (select-tags tags source)
+Liefert einen  Request--Stream, die nur bestimmte Tags eines Requests passieren lässt
+**** (substr s from &optional to)
+Sichere Version von subseq
+**** (tab table)
+Gibt eine Liste tabellarisch aus
+**** (tabcar l)
+Gibt eine Liste tabellarisch aus
+**** (take n source)
+Entnimmt einem Request--Stream eine bestimmte Anzahl Requests
+*** interne Makros 
+**** (aif test then &optional else)
+,,anaphorisches if''
+#+BEGIN_SRC 
+(aif (rxheader "Cache-Control") it "Kein CC-Header")
+#+END_SRC
+**** (collect symbols body)
+*** interne Funktionen
+**** (code x) 
+**** (col-widths-of-table table)
+**** (data x) "datenfeld eines Satzes" (nth 3 x))
+**** (dissect pattern string)
+**** (find-tag-data tag req)
+**** (flatten-opnds l)
+**** (inc-hash hk htab)
+**** (iterator s); Zeilen-Iterator eines Streams erstellen.
+**** (live-stream)
+**** (logfile-stream name)
+**** (parse line)
+**** (print-log-line l)
+**** (tag x)  "Tag eines Satzes" (nth 1 x))
+**** (thread x) "thread-# eines Satzes" (nth 0 x))
+**** (time-string time)
+**** (varnish-request-aggregator source)
+*** Wichtige Common Lisp-Funktionen und Makros
+**** =and=, =or= und =not=  Boolsche Ausdrücke verknüpfen
+**** =defparameter= und =setq= Bindungen erzeugen
+**** =member= : Mengenzugehörigkeit feststellen
+* Glossar
